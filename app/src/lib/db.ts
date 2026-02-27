@@ -84,6 +84,13 @@ try {
   // Column already exists — ignore
 }
 
+// Migration: add reply_to_id column to messages
+try {
+  db.exec("ALTER TABLE messages ADD COLUMN reply_to_id TEXT DEFAULT NULL");
+} catch {
+  // Column already exists — ignore
+}
+
 // Embedding model config (singleton row)
 db.exec(`
   CREATE TABLE IF NOT EXISTS embedding_config (
@@ -320,21 +327,29 @@ export async function getMessages(
   conversationId: string
 ): Promise<Message[]> {
   const stmt = db.prepare(
-    "SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
+    "SELECT id, conversation_id, role, content, created_at, reply_to_id FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
   );
   return stmt.all(conversationId) as Message[];
+}
+
+export async function getMessage(id: string): Promise<Message | undefined> {
+  const stmt = db.prepare(
+    "SELECT id, conversation_id, role, content, created_at, reply_to_id FROM messages WHERE id = ?"
+  );
+  return stmt.get(id) as Message | undefined;
 }
 
 export async function insertMessage(
   id: string,
   conversationId: string,
   role: "user" | "assistant",
-  content: string
+  content: string,
+  replyToId?: string | null,
 ): Promise<void> {
   const stmt = db.prepare(
-    "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)"
+    "INSERT INTO messages (id, conversation_id, role, content, reply_to_id) VALUES (?, ?, ?, ?, ?)"
   );
-  stmt.run(id, conversationId, role, content);
+  stmt.run(id, conversationId, role, content, replyToId ?? null);
 }
 
 // ---------------------------------------------------------------------------

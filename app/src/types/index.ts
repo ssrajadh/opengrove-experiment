@@ -14,6 +14,7 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   created_at: number;
+  reply_to_id?: string | null;
 };
 
 /** Lightweight message used on the client (no DB metadata). */
@@ -21,6 +22,7 @@ export type ClientMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  replyToId?: string | null;
 };
 
 /** An ancestor in a conversation's lineage chain. */

@@ -5,6 +5,7 @@ import { GEMINI_MODELS, OPENAI_MODELS, calculateCost } from "@/lib/model-constan
 import {
   insertMessage,
   insertUsage,
+  getMessage,
   getFullHistory,
   createConversation,
   getSettings,
@@ -47,8 +48,9 @@ export async function POST(req: NextRequest) {
       conversationId: string | null;
       message: string;
       model: string;
+      replyToId?: string | null;
     };
-    const { conversationId, message: messageText, model: modelKey } = body;
+    const { conversationId, message: messageText, model: modelKey, replyToId } = body;
 
     const id = conversationId ?? randomUUID();
 
@@ -60,7 +62,19 @@ export async function POST(req: NextRequest) {
     }
 
     const userMsgId = randomUUID();
-    await insertMessage(userMsgId, id, "user", messageText);
+    await insertMessage(userMsgId, id, "user", messageText, replyToId);
+
+    // Look up the quoted message content for reply context
+    let replyContext: string | null = null;
+    if (replyToId) {
+      const quotedMsg = await getMessage(replyToId);
+      if (quotedMsg) {
+        const truncated = quotedMsg.content.length > 300
+          ? quotedMsg.content.slice(0, 300) + "..."
+          : quotedMsg.content;
+        replyContext = `[Replying to ${quotedMsg.role}: "${truncated}"]`;
+      }
+    }
 
     const allMessages = await getFullHistory(id);
     const contextLimit = MODEL_CONTEXT_TOKENS[modelKey] ?? 32_768;
@@ -78,6 +92,14 @@ export async function POST(req: NextRequest) {
     }
     for (const m of recentMessages) {
       history.push({ role: m.role, content: m.content });
+    }
+
+    // Prepend reply context to the final user message so the model knows what's being referenced
+    if (replyContext && history.length > 0) {
+      const last = history[history.length - 1];
+      if (last.role === "user") {
+        last.content = replyContext + "\n\n" + last.content;
+      }
     }
 
     const assistantMsgId = randomUUID();

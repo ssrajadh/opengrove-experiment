@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUp, Plus, ChevronDown } from "lucide-react";
+import { ArrowUp, Plus, ChevronDown, X } from "lucide-react";
+import type { ClientMessage } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -88,6 +89,8 @@ export default function ChatInput({
   model,
   onModelChange,
   disabled,
+  replyTo,
+  onCancelReply,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -95,6 +98,8 @@ export default function ChatInput({
   model: string;
   onModelChange: (v: string) => void;
   disabled?: boolean;
+  replyTo?: ClientMessage | null;
+  onCancelReply?: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [hasOpenAiKey, setHasOpenAiKey] = useState(false);
@@ -123,6 +128,10 @@ export default function ChatInput({
     const maxHeight = LINE_HEIGHT * MAX_ROWS + PADDING_Y;
     ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
   }, [value]);
+
+  useEffect(() => {
+    if (replyTo) textareaRef.current?.focus();
+  }, [replyTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,6 +223,29 @@ export default function ChatInput({
   return (
     <div className="absolute inset-x-0 bottom-0 z-20">
       <div className="mx-auto w-full max-w-5xl px-4 py-3 flex flex-col items-stretch gap-2">
+        {/* Reply preview bar */}
+        {replyTo && (
+          <div className="flex items-center gap-2 rounded-2xl border border-zinc-700/60 bg-zinc-800/90 px-4 py-2">
+            <div className="flex-1 min-w-0 border-l-2 border-zinc-500 pl-3">
+              <p className="text-xs text-zinc-400 mb-0.5">
+                Replying to {replyTo.role === "user" ? "yourself" : "assistant"}
+              </p>
+              <p className="text-xs text-zinc-500 truncate">
+                {replyTo.content.length > 100
+                  ? replyTo.content.slice(0, 100) + "..."
+                  : replyTo.content}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 rounded-full text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700"
+              onClick={onCancelReply}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
         {/* Input capsule */}
         <div className="relative flex w-full items-end gap-2 rounded-3xl border border-zinc-700/60 bg-zinc-900/95 pl-1.5 pr-1.5 py-1.5 focus-within:border-zinc-600 transition-colors">
           {/* Plus button */}

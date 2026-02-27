@@ -16,6 +16,7 @@ export default function Home() {
   const [model, setModel] = useState("gemini-2.0-flash");
   const [loading, setLoading] = useState(false);
   const [conversationCost, setConversationCost] = useState(0);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -29,7 +30,15 @@ export default function Home() {
     const res = await fetch(`/api/conversations/${id}`);
     if (res.ok) {
       const data = await res.json();
-      setMessages(data.messages ?? []);
+      const msgs = (data.messages ?? []).map(
+        (m: { id: string; role: "user" | "assistant"; content: string; reply_to_id?: string | null }) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          replyToId: m.reply_to_id ?? null,
+        })
+      );
+      setMessages(msgs);
     } else {
       setMessages([]);
     }
@@ -62,6 +71,7 @@ export default function Home() {
     setMessages([]);
     setInput("");
     setConversationCost(0);
+    setReplyTo(null);
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -104,11 +114,14 @@ export default function Home() {
     const text = input.trim();
     if (!text || loading) return;
 
+    const currentReplyTo = replyTo;
     setInput("");
+    setReplyTo(null);
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
       content: text,
+      replyToId: currentReplyTo?.id ?? null,
     };
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
@@ -127,6 +140,7 @@ export default function Home() {
           conversationId: currentId,
           message: text,
           model,
+          replyToId: currentReplyTo?.id ?? undefined,
         }),
       });
 
@@ -241,7 +255,11 @@ export default function Home() {
           )}
         </header>
         <div className="relative flex-1 flex flex-col min-h-0">
-          <MessageList messages={messages} onBranch={currentId ? handleBranch : undefined} />
+          <MessageList
+            messages={messages}
+            onBranch={currentId ? handleBranch : undefined}
+            onReply={setReplyTo}
+          />
           <ChatInput
             value={input}
             onChange={setInput}
@@ -249,6 +267,8 @@ export default function Home() {
             model={model}
             onModelChange={setModel}
             disabled={loading}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
           />
         </div>
       </main>
