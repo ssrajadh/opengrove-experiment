@@ -15,6 +15,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [model, setModel] = useState("gemini-2.0-flash");
   const [loading, setLoading] = useState(false);
+  const [conversationCost, setConversationCost] = useState(0);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -38,18 +39,29 @@ export default function Home() {
     fetchConversations();
   }, [fetchConversations]);
 
+  const fetchCost = useCallback(async (id: string) => {
+    const res = await fetch(`/api/conversations/${id}/cost`);
+    if (res.ok) {
+      const data = await res.json();
+      setConversationCost(data.totalCost ?? 0);
+    }
+  }, []);
+
   useEffect(() => {
     if (currentId) {
       fetchMessages(currentId);
+      fetchCost(currentId);
     } else {
       setMessages([]);
+      setConversationCost(0);
     }
-  }, [currentId, fetchMessages]);
+  }, [currentId, fetchMessages, fetchCost]);
 
   const handleNewChat = () => {
     setCurrentId(null);
     setMessages([]);
     setInput("");
+    setConversationCost(0);
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -144,7 +156,7 @@ export default function Home() {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          let data: { type: string; text?: string; error?: string; conversationId?: string; message?: Message };
+          let data: { type: string; text?: string; error?: string; conversationId?: string; message?: Message; usage?: { cost?: number } };
           try {
             data = JSON.parse(trimmed) as typeof data;
           } catch {
@@ -165,6 +177,9 @@ export default function Home() {
                 m.id === streamingAssistantId ? data.message! : m
               )
             );
+            if (data.usage?.cost) {
+              setConversationCost((prev) => prev + data.usage!.cost!);
+            }
             await fetchConversations();
           } else if (data.type === "error") {
             setMessages((prev) => prev.filter((m) => m.id !== streamingAssistantId));
@@ -175,7 +190,7 @@ export default function Home() {
 
       if (buffer.trim()) {
         try {
-          const data = JSON.parse(buffer.trim()) as { type: string; error?: string; conversationId?: string; message?: Message };
+          const data = JSON.parse(buffer.trim()) as { type: string; error?: string; conversationId?: string; message?: Message; usage?: { cost?: number } };
           if (data.type === "done" && data.conversationId != null && data.message) {
             setCurrentId(data.conversationId);
             setMessages((prev) =>
@@ -183,6 +198,9 @@ export default function Home() {
                 m.id === streamingAssistantId ? data.message! : m
               )
             );
+            if (data.usage?.cost) {
+              setConversationCost((prev) => prev + data.usage!.cost!);
+            }
             await fetchConversations();
           } else if (data.type === "error") {
             setMessages((prev) => prev.filter((m) => m.id !== streamingAssistantId));
@@ -210,10 +228,17 @@ export default function Home() {
         onDelete={handleDeleteChat}
       />
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="shrink-0 border-b border-[var(--border)] px-4 py-3">
+        <header className="shrink-0 border-b border-[var(--border)] px-4 py-3 flex items-center justify-between">
           <h1 className="text-sm font-medium text-[var(--text-muted)]">
             OpenGrove
           </h1>
+          {conversationCost > 0 && (
+            <span className="text-xs font-mono text-[var(--text-muted)]">
+              ${conversationCost < 0.01
+                ? conversationCost.toFixed(6)
+                : conversationCost.toFixed(4)}
+            </span>
+          )}
         </header>
         <div className="relative flex-1 flex flex-col min-h-0">
           <MessageList messages={messages} onBranch={currentId ? handleBranch : undefined} />

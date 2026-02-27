@@ -44,6 +44,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 
+  CREATE TABLE IF NOT EXISTS usage (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_usage_conversation ON usage(conversation_id);
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -321,6 +335,38 @@ export async function insertMessage(
     "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)"
   );
   stmt.run(id, conversationId, role, content);
+}
+
+// ---------------------------------------------------------------------------
+// Usage tracking
+// ---------------------------------------------------------------------------
+
+export async function insertUsage(
+  id: string,
+  conversationId: string,
+  messageId: string,
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cost: number,
+): Promise<void> {
+  const stmt = db.prepare(
+    "INSERT INTO usage (id, conversation_id, message_id, model, input_tokens, output_tokens, cost) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+  stmt.run(id, conversationId, messageId, model, inputTokens, outputTokens, cost);
+}
+
+export type ConversationCost = {
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+};
+
+export function getConversationCost(conversationId: string): ConversationCost {
+  const row = db.prepare(
+    "SELECT COALESCE(SUM(cost), 0) as totalCost, COALESCE(SUM(input_tokens), 0) as totalInputTokens, COALESCE(SUM(output_tokens), 0) as totalOutputTokens FROM usage WHERE conversation_id = ?"
+  ).get(conversationId) as ConversationCost;
+  return row;
 }
 
 // ---------------------------------------------------------------------------
