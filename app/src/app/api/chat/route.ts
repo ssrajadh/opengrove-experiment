@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai/index.mjs";
-import { GEMINI_MODELS, OPENAI_MODELS } from "@/lib/model-constants";
+import { GEMINI_MODELS, OPENAI_MODELS, calculateCost } from "@/lib/model-constants";
 import {
   insertMessage,
   getFullHistory,
   createConversation,
   getSettings,
+  insertUsageLog,
 } from "@/lib/db";
 import { buildContextWithRAG } from "@/lib/rag";
 import { embedAndStoreOverflow } from "@/lib/embeddings";
@@ -89,6 +90,9 @@ export async function POST(req: NextRequest) {
           controller.enqueue(encoder.encode(streamLine(obj)));
         };
 
+        let inputTokens = 0;
+        let outputTokens = 0;
+
         try {
           if (isOpenAIModel(modelKey)) {
             const settings = getSettings();
@@ -122,6 +126,10 @@ export async function POST(req: NextRequest) {
                 fullText += event.delta;
                 send({ type: "chunk", text: event.delta });
               }
+              if (event.type === "response.completed" && event.response?.usage) {
+                inputTokens = event.response.usage.input_tokens ?? 0;
+                outputTokens = event.response.usage.output_tokens ?? 0;
+              }
             }
           } else if (isLocalModel(modelKey)) {
             const settings = getSettings();
@@ -142,6 +150,7 @@ export async function POST(req: NextRequest) {
                 content: m.content,
               })),
               stream: true,
+              stream_options: { include_usage: true },
             });
 
             for await (const chunk of streamResponse) {
@@ -149,6 +158,10 @@ export async function POST(req: NextRequest) {
               if (text) {
                 fullText += text;
                 send({ type: "chunk", text });
+              }
+              if (chunk.usage) {
+                inputTokens = chunk.usage.prompt_tokens ?? 0;
+                outputTokens = chunk.usage.completion_tokens ?? 0;
               }
             }
           } else {
@@ -178,11 +191,24 @@ export async function POST(req: NextRequest) {
                 fullText += text;
                 send({ type: "chunk", text });
               }
+              if (chunk.usageMetadata) {
+                inputTokens = chunk.usageMetadata.promptTokenCount ?? 0;
+                outputTokens = chunk.usageMetadata.candidatesTokenCount ?? 0;
+              }
             }
           }
 
           const text = fullText.trim();
           await insertMessage(assistantMsgId, id, "assistant", text);
+
+          // Persist usage / cost
+          const cost = calculateCost(modelKey, inputTokens, outputTokens);
+          if (inputTokens > 0 || outputTokens > 0) {
+            insertUsageLog(
+              randomUUID(), id, assistantMsgId, modelKey,
+              inputTokens, outputTokens, cost,
+            );
+          }
 
           // Fire-and-forget: embed overflow messages for future RAG retrieval
           if (overflow.length > 0) {
@@ -195,6 +221,7 @@ export async function POST(req: NextRequest) {
             type: "done",
             conversationId: id,
             message: { role: "assistant" as const, content: text, id: assistantMsgId },
+            usage: { inputTokens, outputTokens, cost },
           });
         } catch (err) {
           console.error("Chat API error:", err);

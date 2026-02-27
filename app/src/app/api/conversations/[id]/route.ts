@@ -4,6 +4,7 @@ import {
   getFullHistory,
   deleteConversationTree,
   hasChildren,
+  getConversationCost,
 } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -32,5 +33,6 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const messages = await getFullHistory(id);
-  return NextResponse.json({ ...conversation, messages });
+  const cost = getConversationCost(id);
+  return NextResponse.json({ ...conversation, messages, ...cost });
 }

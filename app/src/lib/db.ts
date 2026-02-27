@@ -70,6 +70,23 @@ try {
   // Column already exists — ignore
 }
 
+// Usage / cost tracking
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage_logs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost REAL NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_usage_logs_conversation ON usage_logs(conversation_id);
+`);
+
 // Embedding model config (singleton row)
 db.exec(`
   CREATE TABLE IF NOT EXISTS embedding_config (
@@ -321,6 +338,38 @@ export async function insertMessage(
     "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)"
   );
   stmt.run(id, conversationId, role, content);
+}
+
+// ---------------------------------------------------------------------------
+// Usage / cost tracking
+// ---------------------------------------------------------------------------
+
+export function insertUsageLog(
+  id: string,
+  conversationId: string,
+  messageId: string,
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cost: number,
+): void {
+  const stmt = db.prepare(
+    "INSERT INTO usage_logs (id, conversation_id, message_id, model, input_tokens, output_tokens, cost) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+  stmt.run(id, conversationId, messageId, model, inputTokens, outputTokens, cost);
+}
+
+export type ConversationCost = {
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+};
+
+export function getConversationCost(conversationId: string): ConversationCost {
+  const row = db.prepare(
+    "SELECT COALESCE(SUM(cost), 0) AS totalCost, COALESCE(SUM(input_tokens), 0) AS totalInputTokens, COALESCE(SUM(output_tokens), 0) AS totalOutputTokens FROM usage_logs WHERE conversation_id = ?"
+  ).get(conversationId) as ConversationCost;
+  return row;
 }
 
 // ---------------------------------------------------------------------------
