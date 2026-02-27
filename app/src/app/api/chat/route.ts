@@ -13,6 +13,7 @@ import {
 import { estimateTokens } from "@/lib/tokens";
 import { buildContextWithRAG } from "@/lib/rag";
 import { embedAndStoreOverflow } from "@/lib/embeddings";
+import { redactPII } from "@/lib/pii";
 import { randomUUID } from "crypto";
 /** Context window sizes in tokens per model. */
 const MODEL_CONTEXT_TOKENS: Record<string, number> = {
@@ -76,6 +77,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const settings = getSettings();
+
     const allMessages = await getFullHistory(id);
     const contextLimit = MODEL_CONTEXT_TOKENS[modelKey] ?? 32_768;
     const { ragContext, recentMessages, overflow } = await buildContextWithRAG(
@@ -102,6 +105,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // PII redaction: scrub sensitive data before sending to cloud APIs
+    if (settings.pii_redaction_enabled === "true" && !isLocalModel(modelKey)) {
+      for (const entry of history) {
+        entry.content = redactPII(entry.content);
+      }
+    }
+
     const assistantMsgId = randomUUID();
 
     const encoder = new TextEncoder();
@@ -117,7 +127,6 @@ export async function POST(req: NextRequest) {
 
         try {
           if (isOpenAIModel(modelKey)) {
-            const settings = getSettings();
             const apiKey = settings.openai_api_key?.trim() || process.env.OPENAI_API_KEY;
             if (!apiKey) {
               send({ type: "error", error: "OpenAI API key not set. Add it in Settings or .env" });
@@ -153,7 +162,6 @@ export async function POST(req: NextRequest) {
               }
             }
           } else if (isLocalModel(modelKey)) {
-            const settings = getSettings();
             const endpoint = settings.local_endpoint?.trim();
             if (!endpoint) {
               send({ type: "error", error: "No local endpoint configured" });
@@ -185,7 +193,6 @@ export async function POST(req: NextRequest) {
               }
             }
           } else {
-            const settings = getSettings();
             const apiKey = settings.gemini_api_key?.trim() || process.env.GEMINI_API_KEY;
             if (!apiKey) {
               send({ type: "error", error: "Gemini API key not set. Add it in Settings or .env" });

@@ -144,6 +144,7 @@ export default function SettingsPage() {
     status: "idle",
     message: "",
   });
+  const [piiRedactionEnabled, setPiiRedactionEnabled] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -162,6 +163,7 @@ export default function SettingsPage() {
       setLocalRuntime(parseLocalRuntime(data.local_runtime));
       setLocalEndpoint(typeof data.local_endpoint === "string" ? data.local_endpoint : "");
       setLocalHiddenModels(new Set(parseHiddenModels(data.local_models_hidden)));
+      setPiiRedactionEnabled(parseBooleanSetting(data.pii_redaction_enabled));
     } catch {
       setHiddenSaveError("Failed to load settings.");
     } finally {
@@ -332,6 +334,17 @@ export default function SettingsPage() {
     [apiKeys, hiddenModels, persistHiddenModels, providerById]
   );
 
+  const handlePiiRedactionChange = useCallback(async (nextEnabled: boolean) => {
+    setPiiRedactionEnabled(nextEnabled);
+    try {
+      await saveSettingsPatch({
+        pii_redaction_enabled: nextEnabled ? "true" : "false",
+      });
+    } catch {
+      setPiiRedactionEnabled((prev) => !prev);
+    }
+  }, [saveSettingsPatch]);
+
   const handleLocalEnabledChange = useCallback(async (nextEnabled: boolean) => {
     setLocalModelsEnabled(nextEnabled);
     try {
@@ -437,8 +450,38 @@ export default function SettingsPage() {
           <TabsContent value="general" className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-5">
             <h2 className="text-lg font-medium text-zinc-100">General</h2>
             <p className="mt-1 text-sm text-zinc-400">
-              Basic application settings and default behavior will appear here.
+              Privacy, safety, and default behavior.
             </p>
+
+            <section className="mt-5 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-100">PII redaction</p>
+                  <p className="text-xs text-zinc-500">
+                    Automatically detect and redact names, emails, phone numbers, SSNs, and
+                    addresses before sending messages to cloud APIs. Redaction runs locally
+                    — your original messages are preserved in the database. Does not apply
+                    to local models.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={piiRedactionEnabled}
+                  onClick={() => void handlePiiRedactionChange(!piiRedactionEnabled)}
+                  disabled={loading}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    piiRedactionEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  <span
+                    className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                      piiRedactionEnabled ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            </section>
           </TabsContent>
 
           <TabsContent value="llm-providers" className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-5">

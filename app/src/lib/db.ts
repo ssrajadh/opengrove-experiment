@@ -423,6 +423,7 @@ const SUPPORTED_SETTINGS_KEYS = [
   "local_runtime",
   "local_endpoint",
   "local_models_hidden",
+  "pii_redaction_enabled",
 ] as const;
 
 export type SettingKey = (typeof SUPPORTED_SETTINGS_KEYS)[number];
@@ -434,7 +435,7 @@ export function isSupportedSettingKey(value: string): value is SettingKey {
 
 export function getSettings(): SettingsMap {
   const rows = db.prepare(
-    "SELECT key, value FROM settings WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "SELECT key, value FROM settings WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).all(...SUPPORTED_SETTINGS_KEYS) as Array<{ key: string; value: string }>;
 
   const settings: SettingsMap = {};
