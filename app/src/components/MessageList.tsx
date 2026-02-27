@@ -1,0 +1,161 @@
+"use client";
+
+import { useState } from "react";
+import type { ClientMessage } from "@/types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+const remarkPlugins = [remarkGfm];
+const rehypePlugins = [rehypeHighlight];
+
+export default function MessageList({
+  messages,
+  onBranch,
+}: {
+  messages: ClientMessage[];
+  onBranch?: (messageIndex: number) => void;
+}) {
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  const handleCopy = async (messageId: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(messageId);
+      window.setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === messageId ? null : prev));
+      }, 1200);
+    } catch {
+      // Ignore clipboard errors in unsupported contexts.
+    }
+  };
+
+  if (messages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+        Send a message to start
+      </div>
+    );
+  }
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div className="flex-1 overflow-y-auto p-4 pb-28 space-y-7">
+        {messages.map((m, idx) => {
+          const isUser = m.role === "user";
+
+          return (
+            <div
+              key={m.id}
+              className={cn(
+                "group mx-auto flex w-full max-w-3xl items-end gap-2",
+                isUser ? "justify-end" : "justify-start"
+              )}
+            >
+              {/* Assistant message: left-aligned, no bubble */}
+              {!isUser && (
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="prose-chat break-words">
+                    <ReactMarkdown
+                      remarkPlugins={remarkPlugins}
+                      rehypePlugins={rehypePlugins}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  </div>
+                  {onBranch && m.content && (
+                    <div className="mt-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => onBranch(idx)}
+                          >
+                            ⑂ Branch
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                          Branch conversation from this message
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => handleCopy(m.id, m.content)}
+                          >
+                            {copiedMessageId === m.id ? "⎘ Copied" : "⎘ Copy"}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                          Copy message text
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* User message: right-aligned muted bubble */}
+              {isUser && (
+                <div className="max-w-[85%] flex flex-col items-end">
+                  <div className="rounded-2xl rounded-br-sm bg-zinc-800 border border-zinc-700/50 px-4 py-3">
+                    <p className="whitespace-pre-wrap break-words text-base leading-7 text-zinc-100">
+                      {m.content}
+                    </p>
+                  </div>
+                  {onBranch && m.content && (
+                    <div className="mt-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => onBranch(idx)}
+                          >
+                            ⑂ Branch
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                          Branch conversation from this message
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => handleCopy(m.id, m.content)}
+                          >
+                            {copiedMessageId === m.id ? "⎘ Copied" : "⎘ Copy"}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                          Copy message text
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </TooltipProvider>
+  );
+}
