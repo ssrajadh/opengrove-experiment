@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import type { Conversation } from "@/types";
 import ConfirmModal from "./ConfirmModal";
@@ -9,6 +9,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 type ConversationNode = Conversation & { children: ConversationNode[] };
+
+type SearchResult = {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+  rank: number;
+};
 
 /** Build a tree from a flat list using parent_id. */
 function buildTree(conversations: Conversation[]): ConversationNode[] {
@@ -39,17 +49,57 @@ export default function Sidebar({
   onSelect,
   onNewChat,
   onDelete,
+  onSearchSelect,
 }: {
   conversations: Conversation[];
   currentId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
+  onSearchSelect?: (conversationId: string, messageId: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data as SearchResult[]);
+      }
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setSearching(false);
+    }
+  }, []);
+
+  // Debounced search
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setSearchQuery(value);
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = setTimeout(() => doSearch(value), 250);
+    },
+    [doSearch],
+  );
+
+  const isSearchActive = searchQuery.trim().length > 0;
 
   const tree = useMemo(() => buildTree(conversations), [conversations]);
 
@@ -198,7 +248,7 @@ export default function Sidebar({
 
   return (
     <aside className="w-72 shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col">
-      <div className="p-3">
+      <div className="p-3 space-y-2">
         <Button
           onClick={onNewChat}
           variant="outline"
@@ -219,17 +269,90 @@ export default function Sidebar({
           </svg>
           New chat
         </Button>
+
+        {/* Search input */}
+        <div className="relative">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search messages..."
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800/50 py-1.5 pl-8 pr-8 text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+          />
+          {isSearchActive && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setSearchResults([]);
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              aria-label="Clear search"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
-        <nav className="min-w-0 px-2 pb-2">
-          {conversations.length === 0 && (
-            <p className="text-zinc-500 text-xs px-2 py-4">
-              No conversations yet
-            </p>
-          )}
-          {tree.map((c) => renderItem(c, 0))}
-        </nav>
+        {isSearchActive ? (
+          <div className="px-2 pb-2">
+            {searching && searchResults.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">Searching...</p>
+            )}
+            {!searching && searchResults.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">No results found</p>
+            )}
+            {searchResults.map((r) => {
+              const snippet = r.content.length > 120 ? r.content.slice(0, 120) + "..." : r.content;
+              return (
+                <button
+                  key={`${r.conversationId}-${r.messageId}`}
+                  onClick={() => {
+                    onSearchSelect?.(r.conversationId, r.messageId);
+                    setSearchQuery("");
+                    setSearchResults([]);
+                  }}
+                  className="w-full text-left rounded-md px-3 py-2 mb-1 hover:bg-zinc-800/60 transition-colors"
+                >
+                  <p className="text-xs font-medium text-zinc-300 truncate">
+                    {r.conversationTitle}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 whitespace-pre-wrap">
+                    <span className="text-zinc-600">{r.role === "user" ? "You" : "AI"}:</span>{" "}
+                    {snippet}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <nav className="min-w-0 px-2 pb-2">
+            {conversations.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">
+                No conversations yet
+              </p>
+            )}
+            {tree.map((c) => renderItem(c, 0))}
+          </nav>
+        )}
       </ScrollArea>
 
       <div className="border-t border-zinc-800 p-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { ClientMessage } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,12 +39,39 @@ export default function MessageList({
   messages,
   onBranch,
   onReply,
+  scrollToMessageId,
+  onScrollComplete,
 }: {
   messages: ClientMessage[];
   onBranch?: (messageIndex: number) => void;
   onReply?: (msg: ClientMessage) => void;
+  scrollToMessageId?: string | null;
+  onScrollComplete?: () => void;
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to target message when scrollToMessageId changes
+  useEffect(() => {
+    if (!scrollToMessageId || messages.length === 0) return;
+
+    // Small delay to ensure DOM has rendered after messages load
+    const timer = setTimeout(() => {
+      const el = containerRef.current?.querySelector(
+        `[data-message-id="${scrollToMessageId}"]`,
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedId(scrollToMessageId);
+        // Remove highlight after animation
+        setTimeout(() => setHighlightedId(null), 2000);
+      }
+      onScrollComplete?.();
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [scrollToMessageId, messages, onScrollComplete]);
 
   const messageMap = useMemo(() => {
     const map = new Map<string, ClientMessage>();
@@ -74,7 +101,7 @@ export default function MessageList({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex-1 overflow-y-auto p-4 pb-28 space-y-7">
+      <div ref={containerRef} className="flex-1 overflow-y-auto p-4 pb-28 space-y-7">
         {messages.map((m, idx) => {
           const isUser = m.role === "user";
           const quotedMessage = m.replyToId ? messageMap.get(m.replyToId) : undefined;
@@ -136,9 +163,11 @@ export default function MessageList({
           return (
             <div
               key={m.id}
+              data-message-id={m.id}
               className={cn(
-                "group mx-auto flex w-full max-w-3xl items-end gap-2",
-                isUser ? "justify-end" : "justify-start"
+                "group mx-auto flex w-full max-w-3xl items-end gap-2 rounded-lg transition-colors duration-700",
+                isUser ? "justify-end" : "justify-start",
+                highlightedId === m.id && "ring-1 ring-blue-500/50 bg-blue-500/10",
               )}
             >
               {/* Assistant message: left-aligned, no bubble */}

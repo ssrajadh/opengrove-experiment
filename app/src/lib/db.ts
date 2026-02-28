@@ -91,6 +91,44 @@ try {
   // Column already exists — ignore
 }
 
+// ---------------------------------------------------------------------------
+// FTS5 full-text search on messages
+// ---------------------------------------------------------------------------
+
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    content='messages',
+    content_rowid='rowid'
+  );
+`);
+
+// Triggers to keep FTS index in sync with messages table
+db.exec(`
+  CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+  END;
+`);
+db.exec(`
+  CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+  END;
+`);
+db.exec(`
+  CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+  END;
+`);
+
+// Back-fill FTS index with any existing messages not yet indexed.
+// Uses 'rebuild' which is idempotent — re-reads all content rows.
+try {
+  db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
+} catch {
+  // Ignore if content table structure doesn't match (edge case on schema change)
+}
+
 // Embedding model config (singleton row)
 db.exec(`
   CREATE TABLE IF NOT EXISTS embedding_config (
@@ -592,6 +630,53 @@ export function queryChunks(
   // Sort by distance, take top-k
   filtered.sort((a, b) => a.distance - b.distance);
   return filtered.slice(0, k);
+}
+
+// ---------------------------------------------------------------------------
+// Full-text search across all messages
+// ---------------------------------------------------------------------------
+
+export type SearchResult = {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+  rank: number;
+};
+
+/**
+ * Search messages across all conversations using FTS5 with BM25 ranking.
+ * Returns the top `limit` results ordered by relevance.
+ */
+export function searchMessages(query: string, limit = 20): SearchResult[] {
+  // FTS5 requires non-empty query
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  // Escape double quotes in the query and wrap each token with * for prefix matching
+  const tokens = trimmed.split(/\s+/).map((t) => `"${t.replace(/"/g, '""')}"*`);
+  const ftsQuery = tokens.join(" ");
+
+  const stmt = db.prepare(`
+    SELECT
+      m.id          AS messageId,
+      m.conversation_id AS conversationId,
+      c.title       AS conversationTitle,
+      m.role,
+      m.content,
+      m.created_at,
+      messages_fts.rank AS rank
+    FROM messages_fts
+    JOIN messages m ON m.rowid = messages_fts.rowid
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE messages_fts MATCH ?
+    ORDER BY messages_fts.rank
+    LIMIT ?
+  `);
+
+  return stmt.all(ftsQuery, limit) as SearchResult[];
 }
 
 export function deleteChunksForConversation(id: string): void {

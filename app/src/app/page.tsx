@@ -17,6 +17,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [conversationCost, setConversationCost] = useState(0);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -88,6 +89,14 @@ export default function Home() {
       }
     }
   };
+
+  const handleSearchSelect = useCallback(
+    (conversationId: string, messageId: string) => {
+      setCurrentId(conversationId);
+      setScrollToMessageId(messageId);
+    },
+    [],
+  );
 
   const handleBranch = async (messageIndex: number) => {
     if (!currentId || loading) return;
@@ -240,6 +249,7 @@ export default function Home() {
         onSelect={setCurrentId}
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
+        onSearchSelect={handleSearchSelect}
       />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="shrink-0 border-b border-[var(--border)] px-4 py-3 flex items-center justify-between">
@@ -259,6 +269,8 @@ export default function Home() {
             messages={messages}
             onBranch={currentId ? handleBranch : undefined}
             onReply={setReplyTo}
+            scrollToMessageId={scrollToMessageId}
+            onScrollComplete={() => setScrollToMessageId(null)}
           />
           <ChatInput
             value={input}
