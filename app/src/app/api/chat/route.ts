@@ -7,6 +7,7 @@ import {
   insertUsage,
   getMessage,
   getFullHistory,
+  getConversation,
   createConversation,
   getSettings,
 } from "@/lib/db";
@@ -50,8 +51,9 @@ export async function POST(req: NextRequest) {
       message: string;
       model: string;
       replyToId?: string | null;
+      contextRefs?: string[];
     };
-    const { conversationId, message: messageText, model: modelKey, replyToId } = body;
+    const { conversationId, message: messageText, model: modelKey, replyToId, contextRefs } = body;
 
     const id = conversationId ?? randomUUID();
 
@@ -93,6 +95,33 @@ export async function POST(req: NextRequest) {
         { role: "assistant", content: "Understood, I have that context." },
       );
     }
+
+    // Inject cross-conversation context references
+    if (contextRefs && contextRefs.length > 0) {
+      const refSections: string[] = [];
+      for (const refId of contextRefs) {
+        try {
+          const refConvo = await getConversation(refId);
+          const refMessages = await getFullHistory(refId);
+          if (refConvo && refMessages.length > 0) {
+            const title = refConvo.title || "Untitled";
+            const formatted = refMessages
+              .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+              .join("\n\n");
+            refSections.push(`--- Referenced conversation: "${title}" ---\n${formatted}`);
+          }
+        } catch (err) {
+          console.error(`Failed to load context ref ${refId}:`, err);
+        }
+      }
+      if (refSections.length > 0) {
+        history.push(
+          { role: "user", content: "Context from other conversations the user wants you to reference:\n\n" + refSections.join("\n\n") },
+          { role: "assistant", content: "Understood, I have that cross-conversation context." },
+        );
+      }
+    }
+
     for (const m of recentMessages) {
       history.push({ role: m.role, content: m.content });
     }

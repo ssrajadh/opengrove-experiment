@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUp, Plus, ChevronDown, X } from "lucide-react";
-import type { ClientMessage } from "@/types";
+import { ArrowUp, Plus, ChevronDown, X, MessageSquare } from "lucide-react";
+import type { ClientMessage, Conversation } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -82,6 +82,8 @@ const MAX_ROWS = 6;
 const LINE_HEIGHT = 20; // px, approximate for text-sm
 const PADDING_Y = 16; // py-2 = 8px * 2
 
+export type ContextRef = { id: string; title: string };
+
 export default function ChatInput({
   value,
   onChange,
@@ -91,6 +93,11 @@ export default function ChatInput({
   disabled,
   replyTo,
   onCancelReply,
+  conversations,
+  currentConversationId,
+  contextRefs,
+  onAddContextRef,
+  onRemoveContextRef,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -100,8 +107,16 @@ export default function ChatInput({
   disabled?: boolean;
   replyTo?: ClientMessage | null;
   onCancelReply?: () => void;
+  conversations?: Conversation[];
+  currentConversationId?: string | null;
+  contextRefs?: ContextRef[];
+  onAddContextRef?: (ref: ContextRef) => void;
+  onRemoveContextRef?: (id: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFilter, setPickerFilter] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
   const [hasOpenAiKey, setHasOpenAiKey] = useState(false);
   const [hasGeminiKey, setHasGeminiKey] = useState(false);
   const [localModelsEnabled, setLocalModelsEnabled] = useState(false);
@@ -132,6 +147,34 @@ export default function ChatInput({
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
   }, [replyTo]);
+
+  // Close picker on click outside
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+        setPickerFilter("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [pickerOpen]);
+
+  // Filter conversations for the picker
+  const pickerConversations = useMemo(() => {
+    if (!conversations) return [];
+    const selectedIds = new Set((contextRefs ?? []).map((r) => r.id));
+    return conversations
+      .filter(
+        (c) =>
+          c.id !== currentConversationId &&
+          !selectedIds.has(c.id) &&
+          (!pickerFilter ||
+            c.title.toLowerCase().includes(pickerFilter.toLowerCase())),
+      )
+      .slice(0, 20);
+  }, [conversations, currentConversationId, contextRefs, pickerFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,16 +289,93 @@ export default function ChatInput({
             </Button>
           </div>
         )}
+        {/* Context ref chips */}
+        {contextRefs && contextRefs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {contextRefs.map((ref) => (
+              <span
+                key={ref.id}
+                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700/60 bg-zinc-800/90 px-3 py-1 text-xs text-zinc-300"
+              >
+                <MessageSquare className="h-3 w-3 text-zinc-500" />
+                <span className="max-w-[160px] truncate">{ref.title}</span>
+                <button
+                  onClick={() => onRemoveContextRef?.(ref.id)}
+                  className="text-zinc-500 hover:text-zinc-300"
+                  aria-label={`Remove ${ref.title}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {/* Input capsule */}
         <div className="relative flex w-full items-end gap-2 rounded-3xl border border-zinc-700/60 bg-zinc-900/95 pl-1.5 pr-1.5 py-1.5 focus-within:border-zinc-600 transition-colors">
-          {/* Plus button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 rounded-full text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          {/* Plus button — attach context from another conversation */}
+          <div className="relative" ref={pickerRef}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-8 w-8 shrink-0 rounded-full text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800",
+                    pickerOpen && "bg-zinc-800 text-zinc-200",
+                  )}
+                  onClick={() => {
+                    setPickerOpen(!pickerOpen);
+                    setPickerFilter("");
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              {!pickerOpen && (
+                <TooltipContent side="top">
+                  Add context from another chat
+                </TooltipContent>
+              )}
+            </Tooltip>
+
+            {/* Conversation picker */}
+            {pickerOpen && (
+              <div className="absolute bottom-full left-0 mb-2 w-72 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl z-30">
+                <div className="p-2">
+                  <input
+                    type="text"
+                    value={pickerFilter}
+                    onChange={(e) => setPickerFilter(e.target.value)}
+                    placeholder="Filter conversations..."
+                    autoFocus
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-800/50 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                  />
+                </div>
+                <div className="max-h-56 overflow-y-auto px-1 pb-1">
+                  {pickerConversations.length === 0 && (
+                    <p className="px-3 py-3 text-xs text-zinc-500">
+                      {conversations && conversations.length > 0
+                        ? "No matching conversations"
+                        : "No other conversations"}
+                    </p>
+                  )}
+                  {pickerConversations.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        onAddContextRef?.({ id: c.id, title: c.title });
+                        setPickerOpen(false);
+                        setPickerFilter("");
+                      }}
+                      className="w-full text-left rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors truncate"
+                    >
+                      {c.title || "New chat"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
           <Textarea
             ref={textareaRef}
