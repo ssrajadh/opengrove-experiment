@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Sidebar from "@/components/Sidebar";
 import MessageList from "@/components/MessageList";
 import ChatInput from "@/components/ChatInput";
-import type { Conversation, ClientMessage } from "@/types";
+import type { Conversation, ClientMessage, ContextRef } from "@/types";
 
 type Message = ClientMessage;
 
@@ -18,6 +18,7 @@ export default function Home() {
   const [conversationCost, setConversationCost] = useState(0);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
+  const [contextRefs, setContextRefs] = useState<ContextRef[]>([]);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -104,6 +105,7 @@ export default function Home() {
     setConversationCost(0);
     setReplyTo(null);
     setScrollToMessageId(null);
+    setContextRefs([]);
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -147,8 +149,10 @@ export default function Home() {
     if (!text || loading) return;
 
     const currentReplyTo = replyTo;
+    const currentContextRefs = contextRefs;
     setInput("");
     setReplyTo(null);
+    setContextRefs([]);
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -173,6 +177,9 @@ export default function Home() {
           message: text,
           model,
           replyToId: currentReplyTo?.id ?? undefined,
+          contextRefs: currentContextRefs.length > 0
+            ? currentContextRefs.map((r) => r.id)
+            : undefined,
         }),
       });
 
@@ -303,6 +310,17 @@ export default function Home() {
             disabled={loading}
             replyTo={replyTo}
             onCancelReply={() => setReplyTo(null)}
+            conversations={conversations}
+            currentConversationId={currentId}
+            contextRefs={contextRefs}
+            onAddContextRef={(ref: ContextRef) => {
+              setContextRefs((prev) =>
+                prev.some((r) => r.id === ref.id) ? prev : [...prev, ref]
+              );
+            }}
+            onRemoveContextRef={(id: string) => {
+              setContextRefs((prev) => prev.filter((r) => r.id !== id));
+            }}
           />
         </div>
       </main>

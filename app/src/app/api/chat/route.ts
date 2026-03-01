@@ -7,6 +7,7 @@ import {
   insertUsage,
   getMessage,
   getFullHistory,
+  getConversation,
   createConversation,
   getSettings,
 } from "@/lib/db";
@@ -50,8 +51,9 @@ export async function POST(req: NextRequest) {
       message: string;
       model: string;
       replyToId?: string | null;
+      contextRefs?: string[];
     };
-    const { conversationId, message: messageText, model: modelKey, replyToId } = body;
+    const { conversationId, message: messageText, model: modelKey, replyToId, contextRefs } = body;
 
     const id = conversationId ?? randomUUID();
 
@@ -80,19 +82,74 @@ export async function POST(req: NextRequest) {
     const settings = getSettings();
 
     const allMessages = await getFullHistory(id);
-    const contextLimit = MODEL_CONTEXT_TOKENS[modelKey] ?? 32_768;
+
+    // ---- Cross-conversation context injection ----
+    const crossConvPreamble: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let crossConvTokens = 0;
+
+    if (contextRefs && contextRefs.length > 0) {
+      const rawLimit = MODEL_CONTEXT_TOKENS[modelKey] ?? 32_768;
+      const available = rawLimit - RESPONSE_BUFFER_TOKENS;
+      const maxCrossConvTokens = Math.floor(available * 0.3);
+
+      for (let idx = 0; idx < contextRefs.length; idx++) {
+        if (crossConvTokens >= maxCrossConvTokens) break;
+        const refId = contextRefs[idx];
+
+        const refConversation = await getConversation(refId);
+        if (!refConversation) continue;
+
+        const refHistory = await getFullHistory(refId);
+        if (refHistory.length === 0) continue;
+
+        const refTitle = refConversation.title || "Untitled";
+        const remaining = contextRefs.length - idx;
+        const perConvBudget = Math.floor((maxCrossConvTokens - crossConvTokens) / remaining);
+
+        // Take the most recent messages that fit within budget
+        let formatted = "";
+        let tokenCount = 0;
+        for (let i = refHistory.length - 1; i >= 0; i--) {
+          const msg = refHistory[i];
+          const line = `${msg.role.toUpperCase()}: ${msg.content}\n`;
+          const lineTokens = estimateTokens(line);
+          if (tokenCount + lineTokens > perConvBudget) break;
+          formatted = line + formatted;
+          tokenCount += lineTokens;
+        }
+
+        if (formatted.trim()) {
+          crossConvPreamble.push(
+            { role: "user", content: `Context from conversation "${refTitle}":\n${formatted.trim()}` },
+            { role: "assistant", content: "Understood, I have that context." },
+          );
+          crossConvTokens += tokenCount + estimateTokens(`Context from conversation "${refTitle}":\nUnderstood, I have that context.`);
+        }
+      }
+    }
+
+    const contextLimit = (MODEL_CONTEXT_TOKENS[modelKey] ?? 32_768) - crossConvTokens;
     const { ragContext, recentMessages, overflow } = await buildContextWithRAG(
       id, allMessages, messageText, contextLimit, RESPONSE_BUFFER_TOKENS,
     );
 
-    // Build provider-ready history with optional RAG preamble
+    // Build provider-ready history
     const history: Array<{ role: "user" | "assistant"; content: string }> = [];
+
+    // Cross-conversation context first
+    for (const entry of crossConvPreamble) {
+      history.push(entry);
+    }
+
+    // RAG preamble
     if (ragContext) {
       history.push(
         { role: "user", content: "Relevant context from earlier in this conversation:\n" + ragContext },
         { role: "assistant", content: "Understood, I have that context." },
       );
     }
+
+    // Recent messages
     for (const m of recentMessages) {
       history.push({ role: m.role, content: m.content });
     }

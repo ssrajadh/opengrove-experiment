@@ -31,6 +31,12 @@ export type LineageEntry = {
   branchPointIndex: number | null;
 };
 
+/** A reference to another conversation attached as context. */
+export type ContextRef = {
+  id: string;
+  title: string;
+};
+
 /** A single result from the global search endpoint. */
 export type SearchResult = {
   messageId: string | null;
