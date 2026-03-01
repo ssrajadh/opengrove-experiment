@@ -134,3 +134,13 @@ body {
 .prose-chat em {
   @apply italic text-zinc-300;
 }
+
+/* Search result highlight animation */
+@keyframes search-highlight-fade {
+  0%, 70% { background-color: rgba(59, 130, 246, 0.1); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3); }
+  100% { background-color: transparent; box-shadow: none; }
+}
+.search-highlight {
+  animation: search-highlight-fade 2.5s ease-out forwards;
+  border-radius: 0.5rem;
+}

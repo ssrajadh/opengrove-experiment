@@ -17,6 +17,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [conversationCost, setConversationCost] = useState(0);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -66,12 +67,43 @@ export default function Home() {
     }
   }, [currentId, fetchMessages, fetchCost]);
 
+  const handleSearchSelect = useCallback(
+    (conversationId: string, messageId: string | null) => {
+      setScrollToMessageId(messageId);
+      if (conversationId !== currentId) {
+        setCurrentId(conversationId);
+      } else if (messageId) {
+        // Already on this conversation — scroll immediately
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`msg-${messageId}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+      }
+    },
+    [currentId],
+  );
+
+  useEffect(() => {
+    if (scrollToMessageId && messages.length > 0) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`msg-${scrollToMessageId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
+      const timer = setTimeout(() => setScrollToMessageId(null), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToMessageId, messages]);
+
   const handleNewChat = () => {
     setCurrentId(null);
     setMessages([]);
     setInput("");
     setConversationCost(0);
     setReplyTo(null);
+    setScrollToMessageId(null);
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -240,6 +272,7 @@ export default function Home() {
         onSelect={setCurrentId}
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
+        onSearchSelect={handleSearchSelect}
       />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="shrink-0 border-b border-[var(--border)] px-4 py-3 flex items-center justify-between">
@@ -259,6 +292,7 @@ export default function Home() {
             messages={messages}
             onBranch={currentId ? handleBranch : undefined}
             onReply={setReplyTo}
+            highlightMessageId={scrollToMessageId}
           />
           <ChatInput
             value={input}

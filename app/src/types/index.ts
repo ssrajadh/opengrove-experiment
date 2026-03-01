@@ -30,3 +30,14 @@ export type LineageEntry = {
   conversationId: string;
   branchPointIndex: number | null;
 };
+
+/** A single result from the global search endpoint. */
+export type SearchResult = {
+  messageId: string | null;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  snippet: string;
+  relevanceType: "semantic" | "text";
+  score: number;
+};

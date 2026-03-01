@@ -603,3 +603,45 @@ export function deleteChunksForConversation(id: string): void {
     // Virtual table may not exist yet — ignore
   }
 }
+
+// ---------------------------------------------------------------------------
+// Search helpers
+// ---------------------------------------------------------------------------
+
+export async function getAllConversationIds(): Promise<string[]> {
+  const rows = db.prepare("SELECT id FROM conversations").all() as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+export type TextSearchRow = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+};
+
+export async function searchMessagesByText(
+  query: string,
+  limit: number = 20,
+): Promise<TextSearchRow[]> {
+  const stmt = db.prepare(`
+    SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
+    FROM messages m
+    WHERE INSTR(LOWER(m.content), LOWER(?)) > 0
+    ORDER BY m.created_at DESC
+    LIMIT ?
+  `);
+  return stmt.all(query, limit) as TextSearchRow[];
+}
+
+export async function getConversationTitleMap(
+  ids: string[],
+): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db.prepare(
+    `SELECT id, title FROM conversations WHERE id IN (${placeholders})`
+  ).all(...ids) as { id: string; title: string }[];
+  return new Map(rows.map((r) => [r.id, r.title]));
+}

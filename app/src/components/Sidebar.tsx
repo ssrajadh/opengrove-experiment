@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
-import type { Conversation } from "@/types";
+import type { Conversation, SearchResult } from "@/types";
 import ConfirmModal from "./ConfirmModal";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,17 +39,51 @@ export default function Sidebar({
   onSelect,
   onNewChat,
   onDelete,
+  onSearchSelect,
 }: {
   conversations: Conversation[];
   currentId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
+  onSearchSelect: (conversationId: string, messageId: string | null) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleSearch = async () => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setHasSearched(false);
+      return;
+    }
+    setIsSearching(true);
+    setHasSearched(true);
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.results ?? []);
+      } else {
+        setSearchResults([]);
+      }
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   const tree = useMemo(() => buildTree(conversations), [conversations]);
 
@@ -221,15 +255,110 @@ export default function Sidebar({
         </Button>
       </div>
 
-      <ScrollArea className="flex-1">
-        <nav className="min-w-0 px-2 pb-2">
-          {conversations.length === 0 && (
-            <p className="text-zinc-500 text-xs px-2 py-4">
-              No conversations yet
-            </p>
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <svg
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              if (e.target.value === "") {
+                setSearchResults([]);
+                setHasSearched(false);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch();
+              if (e.key === "Escape") {
+                setSearchQuery("");
+                setSearchResults([]);
+                setHasSearched(false);
+              }
+            }}
+            placeholder="Search messages..."
+            className="w-full h-8 rounded-md border border-zinc-700 bg-zinc-800/50 pl-8 pr-8 text-xs text-zinc-300 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setSearchResults([]);
+                setHasSearched(false);
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
           )}
-          {tree.map((c) => renderItem(c, 0))}
-        </nav>
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1">
+        {hasSearched ? (
+          <div className="px-2 pb-2">
+            {isSearching ? (
+              <p className="text-zinc-500 text-xs px-2 py-4">Searching...</p>
+            ) : searchResults.length === 0 ? (
+              <p className="text-zinc-500 text-xs px-2 py-4">No results found</p>
+            ) : (
+              <div className="space-y-1">
+                {searchResults.map((result, idx) => (
+                  <button
+                    key={`${result.conversationId}-${result.messageId ?? idx}`}
+                    onClick={() => onSearchSelect(result.conversationId, result.messageId)}
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-zinc-800/60 transition-colors"
+                  >
+                    <p className="text-xs text-zinc-500 truncate mb-0.5">
+                      {result.conversationTitle}
+                    </p>
+                    <p className="text-xs text-zinc-300 line-clamp-2">
+                      {result.snippet}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded-full",
+                          result.relevanceType === "semantic"
+                            ? "bg-blue-900/40 text-blue-400"
+                            : "bg-zinc-700/60 text-zinc-400"
+                        )}
+                      >
+                        {result.relevanceType}
+                      </span>
+                      <span className="text-[10px] text-zinc-600">
+                        {result.role === "user" ? "You" : "Assistant"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <nav className="min-w-0 px-2 pb-2">
+            {conversations.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">
+                No conversations yet
+              </p>
+            )}
+            {tree.map((c) => renderItem(c, 0))}
+          </nav>
+        )}
       </ScrollArea>
 
       <div className="border-t border-zinc-800 p-3">

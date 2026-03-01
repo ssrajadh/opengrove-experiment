@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ClientMessage } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,12 +39,25 @@ export default function MessageList({
   messages,
   onBranch,
   onReply,
+  highlightMessageId,
 }: {
   messages: ClientMessage[];
   onBranch?: (messageIndex: number) => void;
   onReply?: (msg: ClientMessage) => void;
+  highlightMessageId?: string | null;
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (highlightMessageId) {
+      setHighlightedId(highlightMessageId);
+      const timer = setTimeout(() => setHighlightedId(null), 2500);
+      return () => clearTimeout(timer);
+    } else {
+      setHighlightedId(null);
+    }
+  }, [highlightMessageId]);
 
   const messageMap = useMemo(() => {
     const map = new Map<string, ClientMessage>();
@@ -136,9 +149,11 @@ export default function MessageList({
           return (
             <div
               key={m.id}
+              id={`msg-${m.id}`}
               className={cn(
                 "group mx-auto flex w-full max-w-3xl items-end gap-2",
-                isUser ? "justify-end" : "justify-start"
+                isUser ? "justify-end" : "justify-start",
+                highlightedId === m.id && "search-highlight"
               )}
             >
               {/* Assistant message: left-aligned, no bubble */}
