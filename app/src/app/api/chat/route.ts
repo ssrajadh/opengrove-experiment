@@ -13,6 +13,7 @@ import {
 import { estimateTokens } from "@/lib/tokens";
 import { buildContextWithRAG } from "@/lib/rag";
 import { embedAndStoreOverflow } from "@/lib/embeddings";
+import { indexMessageForSearch } from "@/lib/search-indexer";
 import { redactPII } from "@/lib/pii";
 import { randomUUID } from "crypto";
 /** Context window sizes in tokens per model. */
@@ -242,6 +243,17 @@ export async function POST(req: NextRequest) {
               console.error("Background embedding failed:", err),
             );
           }
+
+          // Fire-and-forget: index both messages for global search
+          const now = Math.floor(Date.now() / 1000);
+          indexMessageForSearch({
+            id: userMsgId, conversation_id: id, role: "user",
+            content: messageText, created_at: now,
+          }).catch((err) => console.error("Search index (user) failed:", err));
+          indexMessageForSearch({
+            id: assistantMsgId, conversation_id: id, role: "assistant",
+            content: text, created_at: now,
+          }).catch((err) => console.error("Search index (assistant) failed:", err));
 
           send({
             type: "done",

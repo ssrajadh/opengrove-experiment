@@ -91,6 +91,13 @@ try {
   // Column already exists — ignore
 }
 
+// Migration: add is_search_indexed column to messages
+try {
+  db.exec("ALTER TABLE messages ADD COLUMN is_search_indexed INTEGER NOT NULL DEFAULT 0");
+} catch {
+  // Column already exists — ignore
+}
+
 // Embedding model config (singleton row)
 db.exec(`
   CREATE TABLE IF NOT EXISTS embedding_config (
@@ -186,9 +193,10 @@ export async function deleteConversationTree(id: string): Promise<void> {
   const descendants = getDescendantIds(id);
   const allIds = [id, ...descendants];
 
-  // Clean up vector chunks for all conversations being deleted
+  // Clean up vector chunks and search embeddings for all conversations being deleted
   for (const cid of allIds) {
     deleteChunksForConversation(cid);
+    deleteSearchEmbeddingsForConversation(cid);
   }
 
   // Delete all conversations (messages cascade via FK)
@@ -509,7 +517,9 @@ export function markMessagesEmbedded(ids: string[]): void {
 
 export function resetAllEmbeddings(): void {
   db.exec("UPDATE messages SET is_embedded = 0");
+  db.exec("UPDATE messages SET is_search_indexed = 0");
   dropVectorTable();
+  dropSearchVectorTable();
 }
 
 export function getUnembeddedMessageIds(conversationId: string): Set<string> {
@@ -598,6 +608,99 @@ export function deleteChunksForConversation(id: string): void {
   if (!vecLoaded) return;
   try {
     const stmt = db.prepare("DELETE FROM message_chunks WHERE conversation_id = ?");
+    stmt.run(id);
+  } catch {
+    // Virtual table may not exist yet — ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Global search vector table (no partition key)
+// ---------------------------------------------------------------------------
+
+export function createSearchVectorTable(dimensions: number): void {
+  if (!vecLoaded) return;
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS search_embeddings USING vec0(
+      message_id text primary key,
+      +conversation_id text,
+      +role text,
+      +content_preview text,
+      +embedding_model text,
+      +created_at integer,
+      embedding float[${dimensions}]
+    );
+  `);
+}
+
+export function dropSearchVectorTable(): void {
+  if (!vecLoaded) return;
+  db.exec("DROP TABLE IF EXISTS search_embeddings");
+}
+
+export type SearchResult = {
+  message_id: string;
+  conversation_id: string;
+  role: string;
+  content_preview: string;
+  distance: number;
+};
+
+export function insertSearchEmbedding(
+  messageId: string,
+  conversationId: string,
+  role: string,
+  contentPreview: string,
+  model: string,
+  embedding: Float32Array,
+): void {
+  if (!vecLoaded) return;
+  const stmt = db.prepare(
+    `INSERT INTO search_embeddings
+       (message_id, conversation_id, role, content_preview, embedding_model, created_at, embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  stmt.run(
+    messageId, conversationId, role, contentPreview, model,
+    Math.floor(Date.now() / 1000),
+    Buffer.from(embedding.buffer),
+  );
+}
+
+export function querySearchEmbeddings(
+  queryEmbedding: Float32Array,
+  k: number,
+): SearchResult[] {
+  if (!vecLoaded) return [];
+  const stmt = db.prepare(`
+    SELECT message_id, conversation_id, role, content_preview, distance
+    FROM search_embeddings
+    WHERE embedding MATCH ? AND k = ?
+    ORDER BY distance
+  `);
+  const embeddingBuf = Buffer.from(queryEmbedding.buffer);
+  return stmt.all(embeddingBuf, k) as SearchResult[];
+}
+
+export function markMessagesSearchIndexed(ids: string[]): void {
+  const stmt = db.prepare("UPDATE messages SET is_search_indexed = 1 WHERE id = ?");
+  const tx = db.transaction((msgIds: string[]) => {
+    for (const msgId of msgIds) stmt.run(msgId);
+  });
+  tx(ids);
+}
+
+export function getUnindexedMessages(limit: number = 100): Message[] {
+  const stmt = db.prepare(
+    "SELECT id, conversation_id, role, content, created_at, reply_to_id FROM messages WHERE is_search_indexed = 0 ORDER BY created_at ASC LIMIT ?"
+  );
+  return stmt.all(limit) as Message[];
+}
+
+export function deleteSearchEmbeddingsForConversation(id: string): void {
+  if (!vecLoaded) return;
+  try {
+    const stmt = db.prepare("DELETE FROM search_embeddings WHERE conversation_id = ?");
     stmt.run(id);
   } catch {
     // Virtual table may not exist yet — ignore

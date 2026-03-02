@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { ClientMessage } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,12 +39,33 @@ export default function MessageList({
   messages,
   onBranch,
   onReply,
+  scrollToMessageId,
+  onScrollComplete,
 }: {
   messages: ClientMessage[];
   onBranch?: (messageIndex: number) => void;
   onReply?: (msg: ClientMessage) => void;
+  scrollToMessageId?: string | null;
+  onScrollComplete?: () => void;
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!scrollToMessageId) return;
+
+    const timer = setTimeout(() => {
+      const element = document.getElementById(`message-${scrollToMessageId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedMessageId(scrollToMessageId);
+        setTimeout(() => setHighlightedMessageId(null), 2000);
+      }
+      onScrollComplete?.();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [scrollToMessageId, messages, onScrollComplete]);
 
   const messageMap = useMemo(() => {
     const map = new Map<string, ClientMessage>();
@@ -136,9 +157,11 @@ export default function MessageList({
           return (
             <div
               key={m.id}
+              id={`message-${m.id}`}
               className={cn(
                 "group mx-auto flex w-full max-w-3xl items-end gap-2",
-                isUser ? "justify-end" : "justify-start"
+                isUser ? "justify-end" : "justify-start",
+                highlightedMessageId === m.id && "ring-2 ring-blue-500/50 rounded-lg transition-all duration-500"
               )}
             >
               {/* Assistant message: left-aligned, no bubble */}

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import type { Conversation } from "@/types";
+import { Search, X, Loader2 } from "lucide-react";
+import type { Conversation, SearchResult } from "@/types";
 import ConfirmModal from "./ConfirmModal";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -39,20 +41,31 @@ export default function Sidebar({
   onSelect,
   onNewChat,
   onDelete,
+  onNavigateToMessage,
 }: {
   conversations: Conversation[];
   currentId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
+  onNavigateToMessage: (conversationId: string, messageId: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const tree = useMemo(() => buildTree(conversations), [conversations]);
 
+  // Close menu on outside click
   useEffect(() => {
     if (!openMenuId) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -63,6 +76,88 @@ export default function Sidebar({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openMenuId]);
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    const query = searchQuery.trim();
+    if (!query || query.length < 2) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    debounceTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&k=10`);
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.results ?? []);
+        }
+      } catch {
+        // Silently fail
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [searchQuery]);
+
+  // Ctrl/Cmd+K to open search, Escape to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowSearch(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+      if (e.key === "Escape" && showSearch) {
+        setShowSearch(false);
+        setSearchQuery("");
+        setSearchResults([]);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [showSearch]);
+
+  // One-time backfill of search index on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function runBackfill() {
+      try {
+        while (!cancelled) {
+          const res = await fetch("/api/search/backfill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ limit: 100 }),
+          });
+          if (!res.ok) break;
+          const data = await res.json();
+          if (data.remaining === 0 || data.indexed === 0) break;
+        }
+      } catch {
+        // Silently fail — backfill is best-effort
+      }
+    }
+    runBackfill();
+    return () => { cancelled = true; };
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    setShowSearch(false);
+    setSearchQuery("");
+    setSearchResults([]);
+  }, []);
 
   function renderItem(c: ConversationNode, depth: number) {
     const isActive = currentId === c.id;
@@ -196,6 +291,8 @@ export default function Sidebar({
     );
   }
 
+  const hasActiveSearch = searchQuery.trim().length >= 2;
+
   return (
     <aside className="w-72 shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col">
       <div className="p-3">
@@ -221,15 +318,94 @@ export default function Sidebar({
         </Button>
       </div>
 
+      {/* Search bar */}
+      <div className="px-3 pb-2">
+        {showSearch ? (
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+            <Input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search messages..."
+              className="h-8 pl-8 pr-8 text-xs bg-zinc-800/60 border-zinc-700 text-zinc-200 placeholder:text-zinc-500"
+            />
+            <button
+              onClick={() => {
+                if (searchQuery) {
+                  setSearchQuery("");
+                  setSearchResults([]);
+                } else {
+                  clearSearch();
+                }
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+            >
+              {isSearching ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <X className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+        ) : (
+          <Button
+            onClick={() => {
+              setShowSearch(true);
+              setTimeout(() => searchInputRef.current?.focus(), 0);
+            }}
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start gap-2 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 h-8 text-xs"
+          >
+            <Search className="h-3.5 w-3.5" />
+            Search
+            <kbd className="ml-auto text-[10px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">
+              {typeof navigator !== "undefined" && navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"}K
+            </kbd>
+          </Button>
+        )}
+      </div>
+
       <ScrollArea className="flex-1">
-        <nav className="min-w-0 px-2 pb-2">
-          {conversations.length === 0 && (
-            <p className="text-zinc-500 text-xs px-2 py-4">
-              No conversations yet
+        {searchResults.length > 0 ? (
+          <div className="px-2 pb-2">
+            <p className="text-[10px] text-zinc-500 px-2 py-1 uppercase tracking-wider">
+              {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
             </p>
-          )}
-          {tree.map((c) => renderItem(c, 0))}
-        </nav>
+            {searchResults.map((result) => (
+              <button
+                key={result.messageId}
+                onClick={() => {
+                  onNavigateToMessage(result.conversationId, result.messageId);
+                  clearSearch();
+                }}
+                className="w-full text-left px-2 py-2 rounded-md text-sm hover:bg-zinc-800/60 transition-colors"
+              >
+                <p className="text-[10px] text-zinc-500 mb-0.5 truncate">
+                  {result.conversationTitle}
+                </p>
+                <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">
+                  <span className="text-zinc-500 font-medium">
+                    {result.role === "user" ? "You: " : "AI: "}
+                  </span>
+                  {result.contentPreview}
+                </p>
+              </button>
+            ))}
+          </div>
+        ) : hasActiveSearch && !isSearching ? (
+          <p className="text-zinc-500 text-xs px-4 py-4">No results found</p>
+        ) : (
+          <nav className="min-w-0 px-2 pb-2">
+            {conversations.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">
+                No conversations yet
+              </p>
+            )}
+            {tree.map((c) => renderItem(c, 0))}
+          </nav>
+        )}
       </ScrollArea>
 
       <div className="border-t border-zinc-800 p-3">

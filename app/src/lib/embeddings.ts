@@ -6,6 +6,7 @@ import {
   getEmbeddingConfig,
   upsertEmbeddingConfig,
   createVectorTable,
+  createSearchVectorTable,
   resetAllEmbeddings,
   insertChunk,
   markMessagesEmbedded,
@@ -41,6 +42,7 @@ export async function ensureEmbeddingConfig(): Promise<void> {
     // First-time setup
     upsertEmbeddingConfig(EMBEDDING_MODEL, EMBEDDING_DIMENSIONS);
     createVectorTable(EMBEDDING_DIMENSIONS);
+    createSearchVectorTable(EMBEDDING_DIMENSIONS);
   } else if (
     existing.model !== EMBEDDING_MODEL ||
     existing.dimensions !== EMBEDDING_DIMENSIONS
@@ -52,9 +54,11 @@ export async function ensureEmbeddingConfig(): Promise<void> {
     resetAllEmbeddings();
     upsertEmbeddingConfig(EMBEDDING_MODEL, EMBEDDING_DIMENSIONS);
     createVectorTable(EMBEDDING_DIMENSIONS);
+    createSearchVectorTable(EMBEDDING_DIMENSIONS);
   } else {
     // Same model — just ensure table exists (no-op if already created)
     createVectorTable(EMBEDDING_DIMENSIONS);
+    createSearchVectorTable(EMBEDDING_DIMENSIONS);
   }
 
   configChecked = true;

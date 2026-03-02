@@ -30,3 +30,13 @@ export type LineageEntry = {
   conversationId: string;
   branchPointIndex: number | null;
 };
+
+/** A semantic search result from the global search endpoint. */
+export type SearchResult = {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  contentPreview: string;
+  distance: number;
+};
