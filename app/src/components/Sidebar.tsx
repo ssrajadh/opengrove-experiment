@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import type { Conversation } from "@/types";
+import { Search, X } from "lucide-react";
+import type { Conversation, SearchResult } from "@/types";
 import ConfirmModal from "./ConfirmModal";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,17 +40,25 @@ export default function Sidebar({
   onSelect,
   onNewChat,
   onDelete,
+  onSearchNavigate,
 }: {
   conversations: Conversation[];
   currentId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
+  onSearchNavigate: (conversationId: string, messageId: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const tree = useMemo(() => buildTree(conversations), [conversations]);
 
@@ -63,6 +72,50 @@ export default function Sidebar({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openMenuId]);
+
+  // Ctrl+K / Cmd+K to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const handleSearchInput = useCallback((value: string) => {
+    setSearchQuery(value);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!value.trim() || value.trim().length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: value.trim() }),
+        });
+        if (res.ok) {
+          setSearchResults(await res.json());
+        }
+      } catch {
+        // Silently fail
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  }, []);
+
+  const isSearching = searchQuery.trim().length > 0;
 
   function renderItem(c: ConversationNode, depth: number) {
     const isActive = currentId === c.id;
@@ -198,7 +251,7 @@ export default function Sidebar({
 
   return (
     <aside className="w-72 shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col">
-      <div className="p-3">
+      <div className="p-3 space-y-2">
         <Button
           onClick={onNewChat}
           variant="outline"
@@ -219,17 +272,72 @@ export default function Sidebar({
           </svg>
           New chat
         </Button>
+
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchInput(e.target.value)}
+            placeholder="Search messages..."
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800/50 pl-8 pr-8 py-1.5 text-sm text-zinc-300 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setSearchResults([]);
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
-        <nav className="min-w-0 px-2 pb-2">
-          {conversations.length === 0 && (
-            <p className="text-zinc-500 text-xs px-2 py-4">
-              No conversations yet
-            </p>
-          )}
-          {tree.map((c) => renderItem(c, 0))}
-        </nav>
+        {isSearching ? (
+          <div className="px-2 pb-2">
+            {searchLoading ? (
+              <p className="text-zinc-500 text-xs px-2 py-4">Searching...</p>
+            ) : searchResults.length === 0 && searchQuery.trim().length >= 2 ? (
+              <p className="text-zinc-500 text-xs px-2 py-4">No results found</p>
+            ) : (
+              searchResults.map((result) => (
+                <button
+                  key={result.messageId}
+                  onClick={() => {
+                    onSearchNavigate(result.conversationId, result.messageId);
+                    setSearchQuery("");
+                    setSearchResults([]);
+                  }}
+                  className="w-full text-left rounded-md px-3 py-2 mb-1 hover:bg-zinc-800/60 transition-colors"
+                >
+                  <p className="text-xs text-zinc-400 truncate font-medium">
+                    {result.conversationTitle}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">
+                    <span className="text-zinc-600">
+                      {result.role === "user" ? "You" : "Assistant"}:
+                    </span>{" "}
+                    {result.snippet}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        ) : (
+          <nav className="min-w-0 px-2 pb-2">
+            {conversations.length === 0 && (
+              <p className="text-zinc-500 text-xs px-2 py-4">
+                No conversations yet
+              </p>
+            )}
+            {tree.map((c) => renderItem(c, 0))}
+          </nav>
+        )}
       </ScrollArea>
 
       <div className="border-t border-zinc-800 p-3">

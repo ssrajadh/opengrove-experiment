@@ -1,10 +1,10 @@
 import Database from "better-sqlite3";
 import path from "path";
 import * as sqliteVec from "sqlite-vec";
-import type { Conversation, Message, LineageEntry } from "@/types";
+import type { Conversation, Message, LineageEntry, SearchResult } from "@/types";
 import { randomUUID } from "crypto";
 
-export type { Conversation, Message, LineageEntry };
+export type { Conversation, Message, LineageEntry, SearchResult };
 
 // ---------------------------------------------------------------------------
 // Database setup
@@ -602,4 +602,146 @@ export function deleteChunksForConversation(id: string): void {
   } catch {
     // Virtual table may not exist yet — ignore
   }
+}
+
+// ---------------------------------------------------------------------------
+// Global search
+// ---------------------------------------------------------------------------
+
+function buildSnippet(content: string, query: string, maxLen: number): string {
+  const lowerContent = content.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerContent.indexOf(lowerQuery);
+
+  if (idx === -1 || content.length <= maxLen) {
+    return content.length > maxLen ? content.slice(0, maxLen) + "..." : content;
+  }
+
+  const start = Math.max(0, idx - Math.floor(maxLen / 2));
+  const end = Math.min(content.length, start + maxLen);
+  let snippet = content.slice(start, end);
+
+  if (start > 0) snippet = "..." + snippet;
+  if (end < content.length) snippet = snippet + "...";
+
+  return snippet;
+}
+
+/** Full-text LIKE search across all messages. */
+export function searchMessages(query: string, limit: number = 20): SearchResult[] {
+  const stmt = db.prepare(`
+    SELECT m.id AS messageId, m.conversation_id AS conversationId,
+           c.title AS conversationTitle, m.role, m.content
+    FROM messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE m.content LIKE ?
+    ORDER BY m.created_at DESC
+    LIMIT ?
+  `);
+
+  const rows = stmt.all(`%${query}%`, limit) as Array<{
+    messageId: string;
+    conversationId: string;
+    conversationTitle: string;
+    role: "user" | "assistant";
+    content: string;
+  }>;
+
+  return rows.map((r) => ({
+    messageId: r.messageId,
+    conversationId: r.conversationId,
+    conversationTitle: r.conversationTitle,
+    role: r.role,
+    snippet: buildSnippet(r.content, query, 200),
+    score: 0.5,
+  }));
+}
+
+/**
+ * Resolve a chunk's text back to a specific message by content matching.
+ * Parses the first line of chunk_text ("ROLE: content") and finds it in the DB.
+ */
+function resolveChunkToMessage(
+  conversationId: string,
+  chunkText: string,
+): { id: string; role: "user" | "assistant"; content: string } | null {
+  const firstLine = chunkText.split("\n")[0];
+  const match = firstLine.match(/^(USER|ASSISTANT): (.+)/);
+  if (!match) return null;
+
+  const contentPrefix = match[2].slice(0, 100);
+  const stmt = db.prepare(
+    "SELECT id, role, content FROM messages WHERE conversation_id = ? AND content LIKE ? LIMIT 1",
+  );
+  return stmt.get(conversationId, `${contentPrefix}%`) as {
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+  } | null;
+}
+
+/** Vector search across ALL conversations. */
+export function searchChunksGlobal(
+  queryEmbedding: Float32Array,
+  k: number,
+): SearchResult[] {
+  if (!vecLoaded) return [];
+
+  const convRows = db
+    .prepare("SELECT id, title FROM conversations")
+    .all() as Array<{ id: string; title: string }>;
+  if (convRows.length === 0) return [];
+
+  const titleMap = new Map(convRows.map((c) => [c.id, c.title]));
+  const embeddingBuf = Buffer.from(queryEmbedding.buffer);
+
+  const stmt = db.prepare(`
+    SELECT chunk_id, conversation_id, chunk_text, start_msg_index,
+           end_msg_index, distance
+    FROM message_chunks
+    WHERE embedding MATCH ? AND conversation_id = ? AND k = ?
+    ORDER BY distance
+  `);
+
+  const allResults: (ChunkRow & { conversationTitle: string })[] = [];
+
+  for (const conv of convRows) {
+    try {
+      const rows = stmt.all(embeddingBuf, conv.id, k) as ChunkRow[];
+      for (const row of rows) {
+        allResults.push({
+          ...row,
+          conversationTitle: titleMap.get(conv.id) ?? "Untitled",
+        });
+      }
+    } catch {
+      // Skip conversations with no chunks
+    }
+  }
+
+  allResults.sort((a, b) => a.distance - b.distance);
+  const topK = allResults.slice(0, k);
+
+  const results: SearchResult[] = [];
+  for (const chunk of topK) {
+    const resolved = resolveChunkToMessage(
+      chunk.conversation_id,
+      chunk.chunk_text,
+    );
+    if (resolved) {
+      results.push({
+        messageId: resolved.id,
+        conversationId: chunk.conversation_id,
+        conversationTitle: chunk.conversationTitle,
+        role: resolved.role,
+        snippet:
+          resolved.content.length > 200
+            ? resolved.content.slice(0, 200) + "..."
+            : resolved.content,
+        score: chunk.distance,
+      });
+    }
+  }
+
+  return results;
 }

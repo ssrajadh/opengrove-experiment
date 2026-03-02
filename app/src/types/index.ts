@@ -30,3 +30,13 @@ export type LineageEntry = {
   conversationId: string;
   branchPointIndex: number | null;
 };
+
+/** A single search result representing a matched message. */
+export type SearchResult = {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  snippet: string;
+  score: number;
+};
