@@ -186,9 +186,10 @@ export async function deleteConversationTree(id: string): Promise<void> {
   const descendants = getDescendantIds(id);
   const allIds = [id, ...descendants];
 
-  // Clean up vector chunks for all conversations being deleted
+  // Clean up vector chunks and search embeddings for all conversations being deleted
   for (const cid of allIds) {
     deleteChunksForConversation(cid);
+    deleteSearchEmbeddingsForConversation(cid);
   }
 
   // Delete all conversations (messages cascade via FK)
@@ -601,5 +602,112 @@ export function deleteChunksForConversation(id: string): void {
     stmt.run(id);
   } catch {
     // Virtual table may not exist yet — ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search embeddings (global cross-conversation search)
+// ---------------------------------------------------------------------------
+
+export function createSearchEmbeddingsTable(dimensions: number): void {
+  if (!vecLoaded) return;
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS search_embeddings USING vec0(
+      message_id text primary key,
+      +conversation_id text,
+      +role text,
+      +content_preview text,
+      embedding float[${dimensions}]
+    );
+  `);
+}
+
+export type SearchHit = {
+  message_id: string;
+  conversation_id: string;
+  role: string;
+  content_preview: string;
+  distance: number;
+};
+
+export function insertSearchEmbedding(
+  messageId: string,
+  conversationId: string,
+  role: string,
+  contentPreview: string,
+  embedding: Float32Array,
+): void {
+  if (!vecLoaded) return;
+  db.prepare(
+    `INSERT OR REPLACE INTO search_embeddings
+       (message_id, conversation_id, role, content_preview, embedding)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(messageId, conversationId, role, contentPreview, Buffer.from(embedding.buffer));
+}
+
+export function searchEmbeddings(
+  queryEmbedding: Float32Array,
+  k: number,
+): SearchHit[] {
+  if (!vecLoaded) return [];
+  const stmt = db.prepare(`
+    SELECT message_id, conversation_id, role, content_preview, distance
+    FROM search_embeddings
+    WHERE embedding MATCH ? AND k = ?
+    ORDER BY distance
+  `);
+  return stmt.all(Buffer.from(queryEmbedding.buffer), k) as SearchHit[];
+}
+
+export type FTSHit = {
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  rank: number;
+};
+
+export function searchFTS(query: string, limit: number = 20): FTSHit[] {
+  const stmt = db.prepare(`
+    SELECT m.id, m.conversation_id, m.role, substr(m.content, 1, 200) as content,
+           rank
+    FROM messages_fts
+    JOIN messages m ON messages_fts.rowid = m.rowid
+    WHERE messages_fts MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, limit) as FTSHit[];
+}
+
+export function getUnindexedSearchMessages(): Array<{
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+}> {
+  if (!vecLoaded) return [];
+  try {
+    return db.prepare(`
+      SELECT m.id, m.conversation_id, m.role, m.content
+      FROM messages m
+      LEFT JOIN search_embeddings se ON se.message_id = m.id
+      WHERE se.message_id IS NULL
+      ORDER BY m.created_at ASC
+    `).all() as Array<{ id: string; conversation_id: string; role: string; content: string }>;
+  } catch {
+    // search_embeddings table may not exist yet — return all messages
+    return db.prepare(
+      "SELECT id, conversation_id, role, content FROM messages ORDER BY created_at ASC"
+    ).all() as Array<{ id: string; conversation_id: string; role: string; content: string }>;
+  }
+}
+
+export function deleteSearchEmbeddingsForConversation(id: string): void {
+  if (!vecLoaded) return;
+  try {
+    db.prepare("DELETE FROM search_embeddings WHERE conversation_id = ?").run(id);
+  } catch {
+    // Table may not exist yet
   }
 }

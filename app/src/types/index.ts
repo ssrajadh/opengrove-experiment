@@ -30,3 +30,14 @@ export type LineageEntry = {
   conversationId: string;
   branchPointIndex: number | null;
 };
+
+/** Search result returned from /api/search */
+export type SearchResultItem = {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  role: "user" | "assistant";
+  contentPreview: string;
+  score: number;
+  matchType: "semantic" | "keyword" | "hybrid";
+};

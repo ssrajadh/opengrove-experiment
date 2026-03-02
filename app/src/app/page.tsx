@@ -17,6 +17,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [conversationCost, setConversationCost] = useState(0);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
 
   const fetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -66,12 +67,24 @@ export default function Home() {
     }
   }, [currentId, fetchMessages, fetchCost]);
 
+  const handleSelect = useCallback((id: string) => {
+    setCurrentId(id);
+    setScrollToMessageId(null);
+  }, []);
+
+  const handleSearchSelect = useCallback((conversationId: string, messageId: string) => {
+    setCurrentId(conversationId);
+    setScrollToMessageId(messageId);
+    setTimeout(() => setScrollToMessageId(null), 3000);
+  }, []);
+
   const handleNewChat = () => {
     setCurrentId(null);
     setMessages([]);
     setInput("");
     setConversationCost(0);
     setReplyTo(null);
+    setScrollToMessageId(null);
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -237,9 +250,10 @@ export default function Home() {
       <Sidebar
         conversations={conversations}
         currentId={currentId}
-        onSelect={setCurrentId}
+        onSelect={handleSelect}
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
+        onSearchSelect={handleSearchSelect}
       />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="shrink-0 border-b border-[var(--border)] px-4 py-3 flex items-center justify-between">
@@ -259,6 +273,7 @@ export default function Home() {
             messages={messages}
             onBranch={currentId ? handleBranch : undefined}
             onReply={setReplyTo}
+            scrollToMessageId={scrollToMessageId}
           />
           <ChatInput
             value={input}

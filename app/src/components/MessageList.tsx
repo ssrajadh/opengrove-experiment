@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ClientMessage } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,12 +39,24 @@ export default function MessageList({
   messages,
   onBranch,
   onReply,
+  scrollToMessageId,
 }: {
   messages: ClientMessage[];
   onBranch?: (messageIndex: number) => void;
   onReply?: (msg: ClientMessage) => void;
+  scrollToMessageId?: string | null;
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!scrollToMessageId) return;
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }, [scrollToMessageId, messages]);
 
   const messageMap = useMemo(() => {
     const map = new Map<string, ClientMessage>();
@@ -136,9 +148,11 @@ export default function MessageList({
           return (
             <div
               key={m.id}
+              data-message-id={m.id}
               className={cn(
                 "group mx-auto flex w-full max-w-3xl items-end gap-2",
-                isUser ? "justify-end" : "justify-start"
+                isUser ? "justify-end" : "justify-start",
+                scrollToMessageId === m.id && "ring-1 ring-zinc-500/50 rounded-lg bg-zinc-800/30"
               )}
             >
               {/* Assistant message: left-aligned, no bubble */}

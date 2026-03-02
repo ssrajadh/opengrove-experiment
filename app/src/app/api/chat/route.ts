@@ -14,6 +14,7 @@ import { estimateTokens } from "@/lib/tokens";
 import { buildContextWithRAG } from "@/lib/rag";
 import { embedAndStoreOverflow } from "@/lib/embeddings";
 import { redactPII } from "@/lib/pii";
+import { indexMessageForSearch } from "@/lib/search";
 import { randomUUID } from "crypto";
 /** Context window sizes in tokens per model. */
 const MODEL_CONTEXT_TOKENS: Record<string, number> = {
@@ -242,6 +243,14 @@ export async function POST(req: NextRequest) {
               console.error("Background embedding failed:", err),
             );
           }
+
+          // Fire-and-forget: index new messages for cross-conversation search
+          indexMessageForSearch(userMsgId, id, "user", messageText).catch((err) =>
+            console.error("Background search index failed (user):", err),
+          );
+          indexMessageForSearch(assistantMsgId, id, "assistant", text).catch((err) =>
+            console.error("Background search index failed (assistant):", err),
+          );
 
           send({
             type: "done",
